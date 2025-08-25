@@ -17,14 +17,6 @@ on:
         type: string
         description: service name
         required: true
-      semantic_new_release_version:
-        type: string
-        description: the semantic release version
-        required: false
-      notification_emails:
-        type: string
-        description: 'Comma-separated list of email addresses'
-        required: false
     secrets:
       ARGOCD_AUTH_TOKEN:
         required: true
@@ -40,10 +32,6 @@ on:
         required: false
       SENDGRID_DEPLOYMENT_NOTI_API_KEY:
         required: false
-    outputs:
-      semantic_new_release_version:
-        description: the semantic release version
-        value: ${{ jobs.deploy.outputs.semantic_new_release_version }}
 
 permissions:
   id-token: write
@@ -55,8 +43,6 @@ jobs:
     name: Deploy Argo Application
     environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
-    outputs:
-      semantic_new_release_version: ${{ steps.determine_revision.outputs.target_revision }}
     steps:
       - name: Install dependencies
         run: |
@@ -81,6 +67,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KUSTOMIZATION_PATH: manifests/overlays/${{ inputs.environment }}/kustomization.yaml
           SERVICE_NAME: ${{ inputs.service_name }}
+          TARGET_ENV: ${{ inputs.environment }}
+          BRANCH: ${{ steps.extract_branch.outputs.branch }}
         run: |
           # configure git client
           git config user.name github-actions
@@ -88,52 +76,41 @@ jobs:
 
           # get the image tag
           calculatedSha=$(git rev-parse --short=8 ${{ github.sha }})
-          export NEW_BRANCH=${{ inputs.environment }}/$calculatedSha
+          export NEW_BRANCH=${{ env.TARGET_ENV }}/$calculatedSha
           echo "NEW_BRANCH=$NEW_BRANCH" >> $GITHUB_OUTPUT
-          echo "COMMIT_HASH=$calculatedSha" >> $GITHUB_OUTPUT
           export IMAGE_TAG=$SERVICE_NAME-$calculatedSha
           
           # create a new branch
-          git pull origin ${{ steps.extract_branch.outputs.branch }}
+          git pull origin ${{ env.BRANCH }}
           git checkout -b $NEW_BRANCH
           
-          # merge specific file from ${{ steps.extract_branch.outputs.branch }}
-          git checkout ${{ steps.extract_branch.outputs.branch }} $KUSTOMIZATION_PATH
+          # merge specific file from $BRANCH
+          git checkout ${{ env.BRANCH }} $KUSTOMIZATION_PATH
           yq e -i '.images[0].newTag= env(IMAGE_TAG)' $KUSTOMIZATION_PATH
           git add $KUSTOMIZATION_PATH
 
           # Update the development-patch.yaml file with the IMAGE_TAG_VERSION
-          yq e -i '(.[] | select(.op == "add" and .value.name == "IMAGE_TAG_VERSION").value.value) = env(IMAGE_TAG)' manifests/overlays/${{ inputs.environment }}/development-patch.yaml
-          git add manifests/overlays/${{ inputs.environment }}/development-patch.yaml
+          yq e -i '(.[] | select(.op == "add" and .value.name == "IMAGE_TAG_VERSION").value.value) = env(IMAGE_TAG)' manifests/overlays/${{ env.TARGET_ENV }}/development-patch.yaml
+          git add manifests/overlays/${{ env.TARGET_ENV }}/development-patch.yaml
 
-          if [ "${{ inputs.environment }}" == 'tst' ] && [ -n "$SEMANTIC_NEW_RELEASE_VERSION" ]; then
-            ENVIRONMENTS=("tst" "prgconf" "stg" "prd")
-            for ENV in "${ENVIRONMENTS[@]}"; do
-              yq e -i '.images[0].newTag= env(IMAGE_TAG)' manifests/overlays/${ENV}/kustomization.yaml
-              git add manifests/overlays/${ENV}/kustomization.yaml
-
-              # Update the development-patch.yaml file
-              yq e -i '(.[] | select(.op == "add" and .value.name == "IMAGE_TAG_VERSION").value.value) = env(IMAGE_TAG)' manifests/overlays/${ENV}/development-patch.yaml
-              yq e -i '(.[] | select(.path == "/spec/template/metadata/labels/tags.datadoghq.com~1version").value) = env(SEMANTIC_NEW_RELEASE_VERSION)' manifests/overlays/${ENV}/development-patch.yaml
-              git add manifests/overlays/${ENV}/development-patch.yaml
-            done
-          fi
+          # Update deployment
+          yq e -i '.images[0].newTag= env(IMAGE_TAG)' manifests/overlays/${{ env.TARGET_ENV }}/kustomization.yaml
+          git add manifests/overlays/${{ env.TARGET_ENV }}/kustomization.yaml
           
-          numOfFilesChanged=$( git diff --name-only origin/${{ steps.extract_branch.outputs.branch }} | wc -l )
-          echo "The number of files is different between the branches $NEW_BRANCH and ${{ steps.extract_branch.outputs.branch }}: $numOfFilesChanged"
+          numOfFilesChanged=$( git diff --name-only origin/${{ env.BRANCH }} | wc -l )
+          echo "The number of files is different between the branches $NEW_BRANCH and ${{ env.BRANCH }}: $numOfFilesChanged"
           
           if [ $numOfFilesChanged -gt 0 ]; then
             # push the change to the new branch
-            git commit -m "Update image tag of ${{ inputs.environment }} environment"
+            git commit -m "Update image tag of ${{ env.TARGET_ENV }} environment"
             git push -u origin $NEW_BRANCH
             
             #create pr
             gh pr create \
-              -B ${{ steps.extract_branch.outputs.branch }} \
+              -B ${{ env.BRANCH }} \
               -H $NEW_BRANCH\
-              --title "Promote deploy ${{ inputs.environment }} environment" \
+              --title "Promote deploy ${{ env.TARGET_ENV }} environment" \
               --body "Automatically created by GitHub Actions" \
-
           fi
 
       - name: Merge PR
@@ -149,21 +126,6 @@ jobs:
           fi
           gh pr merge ${{ env.NEW_BRANCH }} --merge --admin --delete-branch
 
-      - name: Determine target revision
-        env:
-         BRANCH: ${{ steps.extract_branch.outputs.branch }}
-        id: determine_revision
-        run: |
-          if [[ "${{ steps.semantic.outputs.new_release_published }}" == 'true' ]]; then
-            echo "target_revision=${{ steps.semantic.outputs.new_release_git_tag }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ inputs.semantic_new_release_version }}" != '' ]]; then
-            echo "target_revision=${{ inputs.semantic_new_release_version }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ inputs.environment }}" == 'dev' ]]; then
-            echo "target_revision=$BRANCH" >> $GITHUB_OUTPUT
-          else
-            echo "target_revision=" >> $GITHUB_OUTPUT
-          fi
-
       - name: Deploy Application
         id: deploy-application
         env:
@@ -171,7 +133,7 @@ jobs:
           APPLICATION_FILE_NAME: application-${{ inputs.environment }}.yaml
           ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
           SERVER_ADDRESS: argo.dep.icariohealth.io
-          TARGET_REVISION: ${{ steps.determine_revision.outputs.target_revision }}
+          TARGET_REVISION: ${{ steps.extract_branch.outputs.branch }}
         run: |
           if [ -n "$TARGET_REVISION" ]; then
             echo -e "\n- op: 'replace'\n  path: '/spec/source/targetRevision'\n  value: '$TARGET_REVISION'" >> $APPLICATION_PATH/application.yaml
@@ -220,69 +182,4 @@ jobs:
             echo -e "::warning:: We recommend following these conventions to maintain consistency and automation in versioning and release management."
             echo -e "::warning:: Thank you!"
             exit 1
-          fi
-
-      - name: Notify Teams Channel After Deployment
-        env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL || '' }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_SHA: ${{ github.sha }}
-        run: |
-          if [ -n "$TEAMS_WEBHOOK_URL" ]; then
-            DEPLOY_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-            COMMIT_MSG=$(git log --format=%B -n 1 $GITHUB_SHA | head -1)
-            SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
-            curl -X POST "$TEAMS_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "type":"message",
-                "attachments":[
-                  {
-                    "contentType": "application/vnd.microsoft.card.adaptive",
-                    "contentUrl": null,
-                    "content": {
-                      "type": "AdaptiveCard",
-                      "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                      "version": "1.5",
-                      "body": [
-                        {
-                          "type": "TextBlock",
-                          "text": "Deployment Approved and Applied",
-                          "wrap": true,
-                          "style": "heading"
-                        },
-                        {
-                          "type": "FactSet",
-                          "facts": [
-                            {
-                              "title": "Service:",
-                              "value": "${{ inputs.service_name }}"
-                            },
-                            {
-                              "title": "Environment:",
-                              "value": "${{ inputs.environment }}"
-                            },
-                            {
-                              "title": "Release tag version/Branch",
-                              "value": "${{ steps.determine_revision.outputs.target_revision }}"
-                            },
-                            {
-                              "title": "Commit:",
-                              "value": "'"$SHORT_SHA"' - '"$COMMIT_MSG"'"
-                            },
-                            {
-                              "title": "Approved By:",
-                              "value": "${{ github.actor }}"
-                            },
-                            {
-                              "title": "Deployment Time:",
-                              "value": "'"$DEPLOY_TIME"'"
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }' || true
           fi
