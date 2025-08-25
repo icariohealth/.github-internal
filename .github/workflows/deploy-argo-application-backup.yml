@@ -517,6 +517,8 @@ jobs:
           # configure git client
           git config user.name github-actions
           git config user.email github-actions@github.com
+          git fetch origin main
+          git rebase origin/main
 
           # update latest deployment version to environment ${{ inputs.environment }}
           yq e '.["${{ inputs.service_name }}"] = {"${{ steps.determine_revision.outputs.target_revision }}" : "${{ env.COMMIT_HASH }}"}' -i ${{ env.VERSION_FILE }}
