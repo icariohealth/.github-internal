@@ -1,0 +1,8 @@
+name: Trigger deployment for Program Reboot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-program-member:
+    uses: 'icariohealth/dhp-program-member/.github/workflows/reboot.yaml@reboot'
