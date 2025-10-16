@@ -2,7 +2,14 @@ name: Trigger deployment for Program Reboot
 
 on:
   workflow_dispatch:
+    inputs:
+      program_member:
+        type: boolean
+        default: false
+        description: Deploy program member
 
 jobs:
   deploy-program-member:
+    if: ${{ inputs.program_member == 'true' }}
     uses: 'icariohealth/dhp-program-member/.github/workflows/reboot.yaml@reboot'
+    secrets: inherit
