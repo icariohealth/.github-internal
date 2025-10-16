@@ -15,5 +15,5 @@ permissions:
 jobs:
   deploy-program-member:
     if: ${{ inputs.program_member == 'true' }}
-    uses: 'icariohealth/dhp-program-member/.github/workflows/reboot.yaml@reboot'
+    uses: 'icariohealth/dhp-program-member/.github/workflows/reboot.yaml@feat/reboot'
     secrets: inherit
