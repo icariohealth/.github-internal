@@ -15,5 +15,6 @@ permissions:
 jobs:
   deploy-program-member:
     if: ${{ inputs.program_member == 'true' }}
-    uses: 'icariohealth/dhp-program-member/.github/workflows/reboot.yaml@feat/reboot'
+#    uses: 'icariohealth/dhp-program-member/.github/workflows/reboot.yaml@feat/reboot'
+    uses: 'icariohealth/.github/.github/workflows/deploy-argo-application.yml@v1.0.6'
     secrets: inherit
