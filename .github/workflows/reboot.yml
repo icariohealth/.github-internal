@@ -9,8 +9,8 @@ on:
         description: Deploy program member
 
 permissions:
+  id-token: write
   contents: read
-  actions: read
 
 jobs:
   deploy-program-member:
