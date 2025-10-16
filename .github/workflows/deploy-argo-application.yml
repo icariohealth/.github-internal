@@ -108,9 +108,9 @@ jobs:
             #create pr
             gh pr create \
               -B ${{ env.BRANCH }} \
-              -H $NEW_BRANCH\
+              -H $NEW_BRANCH \
               --title "Promote deploy ${{ env.TARGET_ENV }} environment" \
-              --body "Automatically created by GitHub Actions" \
+              --body "Automatically created by GitHub Actions"
           fi
 
       - name: Merge PR
